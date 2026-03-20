@@ -1,149 +1,13 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
-	"io"
 	"log"
 	"net/http"
-	"os"
-	"time"
+
+	"inference-gateway-go/handlers"
 
 	"github.com/joho/godotenv"
 )
-
-// PredictRequest is the payload your API expects from the client.
-type PredictRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
-}
-
-// OllamaRequest is the payload sent to the Ollama server.
-type OllamaRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
-	Stream bool   `json:"stream"`
-}
-
-// OllamaResponse is the response returned by Ollama.
-type OllamaResponse struct {
-	Model     string `json:"model"`
-	CreatedAt string `json:"created_at"`
-	Response  string `json:"response"`
-	Done      bool   `json:"done"`
-}
-
-func handler(w http.ResponseWriter, r *http.Request) {
-	// handler accepts a predict request, forwards it to Ollama,
-	// and returns the Ollama response back to the client.
-
-	start := time.Now()
-	log.Printf("INFO: /predict hit from %s with method=%s", r.RemoteAddr, r.Method)
-
-	// Only allow POST for this endpoint.
-	if r.Method != http.MethodPost {
-		log.Printf("WARN: method not allowed: %s", r.Method)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	defer r.Body.Close()
-
-	var req PredictRequest
-	var ollamaReq OllamaRequest
-	var ollamaResponse OllamaResponse
-
-	// Decode incoming JSON request body into PredictRequest.
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-
-	if err := dec.Decode(&req); err != nil {
-		log.Printf("ERROR: failed to decode request body: %v", err)
-		http.Error(w, "invalid JSON payload", http.StatusBadRequest)
-		return
-	}
-
-	// Basic validation.
-	if req.Model == "" || req.Prompt == "" {
-		log.Printf("WARN: missing required fields: model=%q prompt_present=%t", req.Model, req.Prompt != "")
-		http.Error(w, "model and prompt are required", http.StatusBadRequest)
-		return
-	}
-
-	log.Printf("INFO: request validated successfully, model=%s", req.Model)
-
-	// Build request payload for Ollama.
-	ollamaReq.Model = req.Model
-	ollamaReq.Prompt = req.Prompt
-	ollamaReq.Stream = false
-
-	// Convert Go struct into JSON bytes for outbound HTTP request.
-	reqBytes, err := json.Marshal(ollamaReq)
-	if err != nil {
-		log.Printf("ERROR: failed to marshal Ollama request: %v", err)
-		http.Error(w, "error converting JSON to bytes", http.StatusInternalServerError)
-		return
-	}
-
-	// Read Ollama URL from environment.
-	url := os.Getenv("OLLAMA_URL")
-	if url == "" {
-		log.Printf("ERROR: OLLAMA_URL environment variable is not set")
-		http.Error(w, "server configuration error", http.StatusInternalServerError)
-		return
-	}
-
-	log.Printf("INFO: sending request to Ollama at %s", url)
-
-	// Send request to Ollama server.
-	resp, err := http.Post(url, "application/json", bytes.NewReader(reqBytes))
-	if err != nil {
-		log.Printf("ERROR: failed communicating with Ollama server: %v", err)
-		http.Error(w, "error communicating with Ollama server", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	// If Ollama returns a non-200 response, read the body for debugging.
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		log.Printf("ERROR: Ollama returned status=%d body=%s", resp.StatusCode, string(body))
-		http.Error(w, "ollama server returned an error", http.StatusBadGateway)
-		return
-	}
-
-	// Decode Ollama JSON response into struct.
-	ollamaResponseDecoder := json.NewDecoder(resp.Body)
-	if err := ollamaResponseDecoder.Decode(&ollamaResponse); err != nil {
-		log.Printf("ERROR: failed to decode Ollama response: %v", err)
-		http.Error(w, "error decoding Ollama response", http.StatusInternalServerError)
-		return
-	}
-
-	log.Printf("INFO: Ollama response received successfully for model=%s in %s", ollamaResponse.Model, time.Since(start))
-
-	// Return the Ollama response back to the client.
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(ollamaResponse.Response); err != nil {
-		log.Printf("ERROR: failed writing response to client: %v", err)
-		return
-	}
-}
-
-// health returns a simple health check response.
-func health(w http.ResponseWriter, r *http.Request) {
-	log.Printf("INFO: /health hit from %s", r.RemoteAddr)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(map[string]string{
-		"status": "healthy",
-	}); err != nil {
-		log.Printf("ERROR: failed writing health response: %v", err)
-	}
-}
 
 func main() {
 	// Set log flags so logs include date and time.
@@ -152,8 +16,8 @@ func main() {
 		log.Println("no .env file found, using system environment")
 	}
 
-	http.HandleFunc("/predict", handler)
-	http.HandleFunc("/health", health)
+	http.HandleFunc("/predict", handlers.Predict)
+	http.HandleFunc("/health", handlers.Health)
 
 	log.Println("INFO: listening on localhost:8080")
 
