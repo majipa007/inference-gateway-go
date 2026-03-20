@@ -3,11 +3,12 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"time"
 )
 
@@ -37,7 +38,6 @@ func Predict(w http.ResponseWriter, r *http.Request) {
 	// and returns the Ollama response back to the client.
 
 	start := time.Now()
-	log.Printf("INFO: /predict hit from %s with method=%s", r.RemoteAddr, r.Method)
 
 	// Only allow POST for this endpoint.
 	if r.Method != http.MethodPost {
@@ -54,6 +54,9 @@ func Predict(w http.ResponseWriter, r *http.Request) {
 	// Decode incoming JSON request body into PredictRequest.
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
+	baseCtx := context.Background()
+	ctx, cancel := context.WithTimeout(baseCtx, 5*time.Second)
+	defer cancel()
 
 	if err := dec.Decode(&req); err != nil {
 		log.Printf("ERROR: failed to decode request body: %v", err)
@@ -84,7 +87,8 @@ func Predict(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read Ollama URL from environment.
-	url := os.Getenv("OLLAMA_URL")
+	// url := os.Getenv("OLLAMA_URL")
+	url := "http://localhost:11434/api/generate"
 	if url == "" {
 		log.Printf("ERROR: OLLAMA_URL environment variable is not set")
 		http.Error(w, "server configuration error", http.StatusInternalServerError)
@@ -94,10 +98,29 @@ func Predict(w http.ResponseWriter, r *http.Request) {
 	log.Printf("INFO: sending request to Ollama at %s", url)
 
 	// Send request to Ollama server.
-	resp, err := http.Post(url, "application/json", bytes.NewReader(reqBytes))
+	// resp, err := http.Post(url, "application/json", bytes.NewReader(reqBytes))
+	reqOllama, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBytes))
 	if err != nil {
 		log.Printf("ERROR: failed communicating with Ollama server: %v", err)
-		http.Error(w, "error communicating with Ollama server", http.StatusBadGateway)
+		http.Error(w, "Error Building request for OLLAMA", http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := http.DefaultClient.Do(reqOllama)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			log.Printf("ERROR: Ollama request timed out after 5s: %v", err)
+			http.Error(w, "Ollama request timed out", http.StatusGatewayTimeout)
+
+		case errors.Is(err, context.Canceled):
+			log.Printf("ERROR: Ollama request canceled: %v", err)
+			http.Error(w, "Ollama request canceled", http.StatusRequestTimeout)
+
+		default:
+			log.Printf("ERROR: failed communicating with Ollama server: %v", err)
+			http.Error(w, "Error communicating with OLLAMA", http.StatusBadGateway)
+		}
 		return
 	}
 	defer resp.Body.Close()
