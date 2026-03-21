@@ -6,14 +6,13 @@ import (
 	"time"
 )
 
-func TimeoutWare(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
+func TimeoutMiddleware(timeout time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), timeout)
+			defer cancel()
 
-		r = r.WithContext(ctxWithTimeout)
-
-		next.ServeHTTP(w, r)
-	})
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }
