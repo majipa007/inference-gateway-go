@@ -54,9 +54,7 @@ func Predict(w http.ResponseWriter, r *http.Request) {
 	// Decode incoming JSON request body into PredictRequest.
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	baseCtx := context.Background()
-	ctx, cancel := context.WithTimeout(baseCtx, 5*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	if err := dec.Decode(&req); err != nil {
 		log.Printf("ERROR: failed to decode request body: %v", err)
@@ -98,7 +96,6 @@ func Predict(w http.ResponseWriter, r *http.Request) {
 	log.Printf("INFO: sending request to Ollama at %s", url)
 
 	// Send request to Ollama server.
-	// resp, err := http.Post(url, "application/json", bytes.NewReader(reqBytes))
 	reqOllama, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBytes))
 	if err != nil {
 		log.Printf("ERROR: failed communicating with Ollama server: %v", err)

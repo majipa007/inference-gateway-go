@@ -13,5 +13,5 @@ func Register() http.Handler {
 	mux.HandleFunc("/health", handlers.Health)
 	mux.HandleFunc("/predict", handlers.Predict)
 
-	return middlewares.LoggerWare(mux)
+	return middlewares.LoggerWare(middlewares.TimeoutWare(mux))
 }
