@@ -10,6 +10,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"inference-gateway-go/metrics"
 )
 
 // PredictRequest is the payload your API expects from the client.
@@ -107,6 +109,7 @@ func Predict(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
+			metrics.IncTimedOut()
 			log.Printf("ERROR: Ollama request timed out after 5s: %v", err)
 			http.Error(w, "Ollama request timed out", http.StatusGatewayTimeout)
 

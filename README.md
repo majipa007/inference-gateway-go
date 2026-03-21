@@ -10,7 +10,9 @@ Implemented so far:
 - Go project initialized
 - basic HTTP server
 - `/health` endpoint
+- `/metrics` endpoint with basic counters
 - `/predict` endpoint
+- terminal dashboard for live metrics graphs
 - request validation
 - Ollama request/response wiring in progress
 
@@ -53,3 +55,31 @@ Example request:
   "model": "llama3.2",
   "prompt": "Explain semaphores simply"
 }
+```
+
+### `GET /metrics`
+Returns basic gateway counters:
+- `in_flight`
+- `rejected`
+- `timed_out`
+- `total_requests`
+
+## Dashboard
+
+Run the gateway:
+
+```bash
+go run .
+```
+
+In another terminal, launch the live dashboard:
+
+```bash
+GOCACHE=/tmp/gocache go run ./cmd/dashboard
+```
+
+Optional flags:
+
+```bash
+GOCACHE=/tmp/gocache go run ./cmd/dashboard -addr http://localhost:8080/metrics -interval 1s -width 64
+```
