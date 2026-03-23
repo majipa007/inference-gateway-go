@@ -110,7 +110,7 @@ func Predict(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
 			metrics.IncTimedOut()
-			log.Printf("ERROR: Ollama request timed out after 5s: %v", err)
+			log.Printf("ERROR: Ollama request timed out: %v", err)
 			http.Error(w, "Ollama request timed out", http.StatusGatewayTimeout)
 
 		case errors.Is(err, context.Canceled):

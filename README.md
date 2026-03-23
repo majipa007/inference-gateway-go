@@ -13,6 +13,7 @@ Implemented so far:
 - `/metrics` endpoint with basic counters
 - `/predict` endpoint
 - terminal dashboard for live metrics graphs
+- spam/load generator for `/predict`
 - request validation
 - Ollama request/response wiring in progress
 
@@ -72,6 +73,12 @@ Run the gateway:
 go run .
 ```
 
+Override the default request timeout if needed:
+
+```bash
+GATEWAY_TIMEOUT=200s go run .
+```
+
 In another terminal, launch the live dashboard:
 
 ```bash
@@ -82,4 +89,30 @@ Optional flags:
 
 ```bash
 GOCACHE=/tmp/gocache go run ./cmd/dashboard -addr http://localhost:8080/metrics -interval 1s -width 64
+```
+
+## Load Generator
+
+Current gateway defaults:
+- max concurrent `/predict` requests: `100`
+- request timeout: `30s`
+
+The gateway request timeout can be overridden with `GATEWAY_TIMEOUT`, for example `GATEWAY_TIMEOUT=200s go run .`.
+
+Run a local load test:
+
+```bash
+GOCACHE=/tmp/gocache go run ./cmd/spam -n 1000 -c 100
+```
+
+The run summary includes throughput plus request latency percentiles:
+- `p1`
+- `p50`
+- `p90`
+- `p99`
+
+Optional flags:
+
+```bash
+GOCACHE=/tmp/gocache go run ./cmd/spam -addr http://localhost:8080/predict -model llama3.2 -prompt "Explain semaphores simply" -n 1000 -c 100 -timeout 35s
 ```
