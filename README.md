@@ -45,7 +45,8 @@ Client
 ## Endpoints
 
 ### `GET /health`
-Basic health check.
+Health check that verifies the gateway can reach Ollama.
+Returns `200` only when Ollama responds successfully.
 
 ### `POST /predict`
 Accepts a prediction request and forwards it to the model backend.
