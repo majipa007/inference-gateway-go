@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -24,12 +25,26 @@ type predictRequest struct {
 
 func main() {
 	addr := flag.String("addr", "http://localhost:8080/predict", "predict endpoint URL")
+	engine := flag.String("engine", "ollama", "inference engine: ollama or llamacpp")
 	model := flag.String("model", "llama3.2", "model name")
 	prompt := flag.String("prompt", "Explain semaphores simply", "prompt text")
 	requests := flag.Int("n", 1000, "total number of requests to send")
 	concurrency := flag.Int("c", 100, "number of concurrent workers")
 	timeout := flag.Duration("timeout", 35*time.Second, "per-request client timeout")
 	flag.Parse()
+
+	if *engine == "llamacpp" && !strings.HasSuffix(*addr, "/llamacpp/predict") {
+		*addr = strings.Replace(*addr, "/predict", "/llamacpp/predict", 1)
+	}
+
+	if *requests <= 0 {
+		fmt.Fprintln(os.Stderr, "-n must be greater than 0")
+		os.Exit(1)
+	}
+	if *concurrency <= 0 {
+		fmt.Fprintln(os.Stderr, "-c must be greater than 0")
+		os.Exit(1)
+	}
 
 	if *requests <= 0 {
 		fmt.Fprintln(os.Stderr, "-n must be greater than 0")
