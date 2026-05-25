@@ -127,9 +127,9 @@ func main() {
 
 		// Print results
 		printResult(&ollamaResult)
-		fmt.Println("\n---\n")
+		fmt.Println("---")
 		printResult(&llamacppResult)
-		fmt.Println("\n---\n")
+		fmt.Println("---")
 		printComparison(&ollamaResult, &llamacppResult)
 
 	} else {
