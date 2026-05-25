@@ -97,8 +97,6 @@ func (b *Batcher) Submit(req *Request) {
 	req.RespCh = respCh
 
 	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	b.entries = append(b.entries, &entry{
 		req: req,
 		dl:  time.Now().Add(b.maxWait),
@@ -107,22 +105,10 @@ func (b *Batcher) Submit(req *Request) {
 	if len(b.entries) >= b.maxSize {
 		b.cond.Broadcast()
 	}
+	b.mu.Unlock()
 
 	// Wait for this entry to be processed by the batch handler
-	for {
-		// Check if entry is still in the queue (hasn't been flushed yet)
-		found := false
-		for _, e := range b.entries {
-			if e.req.RespCh == respCh {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return // entry was flushed, results are in respCh
-		}
-		b.cond.Wait()
-	}
+	<-respCh
 }
 
 func (b *Batcher) loop() {
@@ -131,10 +117,21 @@ func (b *Batcher) loop() {
 	for atomic.LoadInt32(&b.running) == 1 {
 		b.mu.Lock()
 
-		// Wait until we have entries or the deadline arrives
+		// Wait until we have entries or stop is requested
 		for len(b.entries) == 0 {
+			if atomic.LoadInt32(&b.running) == 0 {
+				b.mu.Unlock()
+				return
+			}
 			b.mu.Unlock()
 			time.Sleep(time.Millisecond)
+			b.mu.Lock()
+		}
+
+		// Batching window - wait for more entries to arrive (up to maxWait)
+		if len(b.entries) > 0 && len(b.entries) < b.maxSize {
+			b.mu.Unlock()
+			time.Sleep(b.maxWait / 2)
 			b.mu.Lock()
 		}
 

@@ -68,13 +68,19 @@ func TestBatcher_BatchCollectsMultiple(t *testing.T) {
 	defer b.Stop()
 
 	// Submit requests quickly - they should batch together
+	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
-		req := &Request{
-			ID:      fmt.Sprintf("req-%d", i),
-			Payload: []byte("payload"),
-		}
-		b.Submit(req)
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			req := &Request{
+				ID:      fmt.Sprintf("req-%d", idx),
+				Payload: []byte("payload"),
+			}
+			b.Submit(req)
+		}(i)
 	}
+	wg.Wait()
 
 	time.Sleep(150 * time.Millisecond)
 
