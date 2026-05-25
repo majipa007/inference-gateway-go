@@ -11,11 +11,13 @@ Implemented so far:
 - basic HTTP server
 - `/health` endpoint
 - `/metrics` endpoint with basic counters
-- `/predict` endpoint
+- `/predict` endpoint (Ollama backend)
+- `/llamacpp/predict` endpoint (llama.cpp REST API)
+- `/llamacpp/stream` endpoint (llama.cpp streaming)
 - terminal dashboard for live metrics graphs
-- spam/load generator for `/predict`
+- spam/load generator for both endpoints
 - request validation
-- Ollama request/response wiring in progress
+- concurrent request limiting
 
 ## Project Goal
 
@@ -26,6 +28,7 @@ Build a gateway that sits in front of model backends and handles:
 - batching
 - scheduling
 - observability under load
+- multi-backend support (Ollama vs llama.cpp)
 
 This project is focused on **systems behavior under load**, not model accuracy.
 
@@ -34,13 +37,7 @@ This project is focused on **systems behavior under load**, not model accuracy.
 - Go
 - `net/http`
 - Ollama for local model serving
-
-## Current Flow
-
-Client  
-→ Go gateway  
-→ model backend (Ollama for now)  
-→ response returned to client
+- llama.cpp REST API for comparison
 
 ## Endpoints
 
@@ -49,13 +46,39 @@ Health check that verifies the gateway can reach Ollama.
 Returns `200` only when Ollama responds successfully.
 
 ### `POST /predict`
-Accepts a prediction request and forwards it to the model backend.
+Ollama endpoint. Accepts a prediction request and forwards it to the Ollama model backend.
 
 Example request:
 ```json
 {
   "model": "llama3.2",
   "prompt": "Explain semaphores simply"
+}
+```
+
+### `POST /llamacpp/predict`
+llama.cpp endpoint. Accepts a prediction request and forwards it to the llama.cpp REST server.
+
+Example request:
+```json
+{
+  "model": "llama3.2",
+  "prompt": "Explain semaphores simply",
+  "n_predict": 256,
+  "temperature": 0.8
+}
+```
+
+### `POST /llamacpp/stream`
+llama.cpp streaming endpoint. Returns an SSE stream of completion tokens.
+
+Example request:
+```json
+{
+  "model": "llama3.2",
+  "prompt": "Explain semaphores simply",
+  "n_predict": 256,
+  "temperature": 0.8
 }
 ```
 
@@ -66,54 +89,105 @@ Returns basic gateway counters:
 - `timed_out`
 - `total_requests`
 
-## Dashboard
+## Configuration
 
-Run the gateway:
+### Ollama
+```bash
+# Default: http://localhost:11434
+export OLLAMA_URL=http://localhost:11434
+```
 
+### llama.cpp
+```bash
+# Default: http://localhost:8081
+export LLAMA_CPP_URL=http://localhost:8081
+
+# Default: 30s
+export LLAMA_CPP_TIMEOUT=30s
+```
+
+### Gateway
+```bash
+# Default: 30s
+export GATEWAY_TIMEOUT=200s
+```
+
+## Running
+
+### Start the gateway
 ```bash
 go run .
 ```
 
-Override the default request timeout if needed:
-
-```bash
-GATEWAY_TIMEOUT=200s go run .
-```
-
+### Dashboard
 In another terminal, launch the live dashboard:
-
 ```bash
 GOCACHE=/tmp/gocache go run ./cmd/dashboard
 ```
 
 Optional flags:
-
 ```bash
 GOCACHE=/tmp/gocache go run ./cmd/dashboard -addr http://localhost:8080/metrics -interval 1s -width 64
 ```
 
-## Load Generator
+## Load Testing
 
 Current gateway defaults:
-- max concurrent `/predict` requests: `100`
+- max concurrent `/predict` requests: `2000`
 - request timeout: `30s`
 
-The gateway request timeout can be overridden with `GATEWAY_TIMEOUT`, for example `GATEWAY_TIMEOUT=200s go run .`.
-
-Run a local load test:
-
+### Ollama endpoint
 ```bash
 GOCACHE=/tmp/gocache go run ./cmd/spam -n 1000 -c 100
 ```
 
-The run summary includes throughput plus request latency percentiles:
-- `p1`
-- `p50`
-- `p90`
-- `p99`
-
-Optional flags:
-
+### llama.cpp endpoint
 ```bash
-GOCACHE=/tmp/gocache go run ./cmd/spam -addr http://localhost:8080/predict -model llama3.2 -prompt "Explain semaphores simply" -n 1000 -c 100 -timeout 35s
+GOCACHE=/tmp/gocache go run ./cmd/spam -n 1000 -c 100 -engine llamacpp
 ```
+
+### Custom flags
+```bash
+GOCACHE=/tmp/gocache go run ./cmd/spam \
+  -addr http://localhost:8080/predict \
+  -model llama3.2 \
+  -prompt "Explain semaphores simply" \
+  -n 1000 -c 100 -timeout 35s
+```
+
+## Architecture
+
+```
+Client
+  → Go gateway
+  → model backend (Ollama OR llama.cpp)
+  → response returned to client
+
+Middleware chain:
+  LoggerWare → MetricsWare → TimeoutMiddleware → ConcurrentLimitWare → handler
+```
+
+## Testing
+
+Run all tests:
+```bash
+go test ./...
+```
+
+Run with coverage:
+```bash
+go test ./... -cover
+```
+
+## Comparison: Ollama vs llama.cpp
+
+This project supports both backends for comparison:
+
+| Feature | Ollama | llama.cpp |
+|---------|--------|-----------|
+| Endpoint | `/predict` | `/llamacpp/predict` |
+| Streaming | No | `/llamacpp/stream` |
+| Config | `OLLAMA_URL` | `LLAMA_CPP_URL` |
+| Model loading | Automatic | Pre-loaded server |
+| API style | `/api/generate` | `/completion` |
+| Token metrics | No | Yes (tokens_read, tokens_evaluated) |
