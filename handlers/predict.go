@@ -86,26 +86,23 @@ func Predict(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read Ollama URL from environment.
-	// url := os.Getenv("OLLAMA_URL")
-	url := "http://localhost:11434/api/generate"
-	if url == "" {
-		log.Printf("ERROR: OLLAMA_URL environment variable is not set")
-		http.Error(w, "server configuration error", http.StatusInternalServerError)
-		return
-	}
+	url := ollamaBaseURL() + "/api/generate"
 
 	log.Printf("INFO: sending request to Ollama at %s", url)
+
+	// Create an HTTP client with timeout derived from context.
+	client := &http.Client{Timeout: 30 * time.Second}
 
 	// Send request to Ollama server.
 	reqOllama, err := http.NewRequestWithContext(r.Context(), "POST", url, bytes.NewReader(reqBytes))
 	if err != nil {
-		log.Printf("ERROR: failed communicating with Ollama server: %v", err)
-		http.Error(w, "Error Building request for OLLAMA", http.StatusInternalServerError)
+		log.Printf("ERROR: failed building request for Ollama: %v", err)
+		http.Error(w, "error building request for OLLAMA", http.StatusInternalServerError)
 		return
 	}
+	reqOllama.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(reqOllama)
+	resp, err := client.Do(reqOllama)
 	if err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
