@@ -4,20 +4,23 @@ A production-style Go gateway for ML/LLM inference focused on admission control,
 
 ## Current Status
 
-Early build stage.
-
-Implemented so far:
+Implemented features:
 - Go project initialized
 - basic HTTP server
 - `/health` endpoint
-- `/metrics` endpoint with basic counters
+- `/metrics` endpoint with latency histograms, cache counters, batch counters
 - `/predict` endpoint (Ollama backend)
 - `/llamacpp/predict` endpoint (llama.cpp REST API)
-- `/llamacpp/stream` endpoint (llama.cpp streaming)
-- terminal dashboard for live metrics graphs
-- spam/load generator for both endpoints
+- `/llamacpp/stream` endpoint (llama.cpp SSE streaming)
+- `/llamacpp/health` endpoint
+- terminal dashboard for live metrics graphs with braille area charts
+- spam/load generator with A/B test mode for engine comparison
 - request validation
-- concurrent request limiting
+- concurrent request limiting (static and adaptive)
+- LRU response caching with configurable TTL and capacity
+- request batching for throughput optimization
+- adaptive concurrency limiter with dynamic soft limit
+- comprehensive test suite (40+ tests across all packages)
 
 ## Project Goal
 
@@ -83,11 +86,17 @@ Example request:
 ```
 
 ### `GET /metrics`
-Returns basic gateway counters:
-- `in_flight`
-- `rejected`
-- `timed_out`
-- `total_requests`
+Returns gateway metrics in JSON format:
+- `in_flight` - current concurrent requests
+- `rejected` - requests shed due to concurrency limits
+- `timed_out` - requests that exceeded timeout
+- `total_requests` - total requests received
+- `batched` - requests processed through batcher
+- `total_batches` - total batch operations performed
+- `cache_hits` - cache lookup hits
+- `cache_misses` - cache lookup misses
+- `latency_p50` / `latency_p90` / `latency_p99` - latency percentiles (seconds)
+- `adaptive_soft_limit` - current adaptive concurrency threshold
 
 ## Configuration
 
@@ -155,17 +164,71 @@ GOCACHE=/tmp/gocache go run ./cmd/spam \
   -n 1000 -c 100 -timeout 35s
 ```
 
+### A/B Test (Ollama vs llama.cpp)
+Runs equal load on both engines simultaneously and outputs a comparison table:
+```bash
+GOCACHE=/tmp/gocache go run ./cmd/spam -ab -n 1000 -c 100
+```
+
+Example output:
+```
+=== A/B Test Mode ===
+Ollama endpoint : http://localhost:8080/predict
+llama.cpp endpoint : http://localhost:8080/llamacpp/predict
+Total requests per engine : 1000
+
+              Metric |               Ollama |            llama.cpp
+-------------------- | -------------------- | --------------------
+        Success Rate |               98.5%  |               99.2%
+         P50 Latency |       45ms   |       32ms
+         P99 Latency |       120ms  |       89ms
+
+   Faster Throughput : llama.cpp by 1.41x
+```
+
 ## Architecture
 
 ```
 Client
-  → Go gateway
-  → model backend (Ollama OR llama.cpp)
+  → LoggerWare (request logging)
+  → MetricsWare (request counting)
+  → TimeoutMiddleware (deadline propagation)
+  → AdaptiveLimiter (concurrency control)
+  → CachingHandler (LRU cache: hit → return / miss → next handler)
+  → Handler (Ollama or llama.cpp)
   → response returned to client
 
-Middleware chain:
-  LoggerWare → MetricsWare → TimeoutMiddleware → ConcurrentLimitWare → handler
+Caching:
+  Key: model + prompt
+  Default TTL: 10 minutes
+  Default capacity: 10,000 entries
+  Cache key: model:prompt (e.g., "llama3.2:Explain semaphores simply")
+
+Adaptive Concurrency:
+  - Hard limit: 2000 concurrent requests
+  - Soft limit: starts at hard limit, reduces to 60% of actual load under pressure
+  - Minimum soft limit: hard_limit / 4
+  - Load shedding: rejects requests when load exceeds soft limit
+  - Prevents backend saturation during traffic spikes
 ```
+
+## Performance Features
+
+### Response Caching
+Identical requests (same model + prompt) return cached responses without hitting the backend. Second request includes `X-Cache: HIT` header.
+
+### Adaptive Concurrency
+Unlike static limits, the adaptive limiter monitors in-flight requests and dynamically adjusts the acceptance threshold. During high load, it proactively sheds traffic before backends saturate.
+
+### Request Batching
+The batcher collects requests over a configurable window (default 50ms) or max batch size (default 32), then processes them together for throughput optimization.
+
+### A/B Testing
+Run side-by-side comparisons between Ollama and llama.cpp:
+```bash
+go run ./cmd/spam -ab -n 1000 -c 100
+```
+Outputs a comparison table with success rate, P50/P99 latency, and throughput ratio for each engine.
 
 ## Testing
 
@@ -179,6 +242,20 @@ Run with coverage:
 go test ./... -cover
 ```
 
+Run specific package:
+```bash
+go test ./gateway/... -v
+go test ./cache/... -v
+go test ./middlewares/... -v
+```
+
+Test suite covers:
+- **cache**: LRU eviction, TTL expiry, concurrent access, capacity bounds (12 tests)
+- **batcher**: Batch collection, flush timing, stats tracking (9 tests)
+- **middlewares**: Adaptive limiter rejection, context cancellation, concurrent stats (4 tests)
+- **gateway**: Cache hit/miss, TTL expiry, capacity eviction, concurrent access, integration flows (14 tests)
+- **metrics**: Histogram recording, percentile calculation, counter operations, batch/cache tracking
+
 ## Comparison: Ollama vs llama.cpp
 
 This project supports both backends for comparison:
@@ -186,8 +263,22 @@ This project supports both backends for comparison:
 | Feature | Ollama | llama.cpp |
 |---------|--------|-----------|
 | Endpoint | `/predict` | `/llamacpp/predict` |
-| Streaming | No | `/llamacpp/stream` |
-| Config | `OLLAMA_URL` | `LLAMA_CPP_URL` |
+| Streaming | No | `/llamacpp/stream` (SSE) |
+| Config | `OLLAMA_URL` | `LLAMA_CPP_URL`, `LLAMA_CPP_TIMEOUT` |
 | Model loading | Automatic | Pre-loaded server |
 | API style | `/api/generate` | `/completion` |
 | Token metrics | No | Yes (tokens_read, tokens_evaluated) |
+| Health check | `/health` | `/llamacpp/health` |
+
+## Gateway Features (Shared by Both Backends)
+
+| Feature | Implementation |
+|---------|---------------|
+| Response caching | LRU cache, configurable TTL (default 10m), capacity (default 10000) |
+| Adaptive concurrency | Dynamic soft limit, load shedding, configurable hard limit (default 2000) |
+| Latency tracking | Histogram with P50/P90/P99 percentiles |
+| Request logging | Structured logging with method, path, status, duration |
+| Timeout propagation | Context-based with configurable gateway timeout |
+| Metrics | JSON endpoint with counters, histograms, and percentiles |
+| Dashboard | Terminal UI with braille area charts, rolling history, real-time updates |
+| Load testing | Concurrent workers, configurable duration, A/B comparison mode |

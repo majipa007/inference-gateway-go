@@ -21,24 +21,24 @@ const (
 func Register() http.Handler {
 	mux := http.NewServeMux()
 
-	// Ollama predict endpoint with caching
+	// Ollama predict endpoint with caching and adaptive concurrency
 	cacheHandler := gateway.NewCachingHandler(cacheTTL, cacheCapacity, handlers.Predict)
 	var predhandler http.Handler = cacheHandler
-	predhandler = middlewares.ConcurrentLimitWare(2000)(predhandler)
+	predhandler = middlewares.NewAdaptiveConcurrentLimit(2000)(predhandler)
 	mux.Handle("/predict", predhandler)
 
-	// llama.cpp predict endpoint with caching
+	// llama.cpp predict endpoint with caching and adaptive concurrency
 	llamaBaseURL, llamaTimeout := llamacpp.LoadConfig()
 	llamacpp.SetDefaultClient(llamacpp.NewClient(llamaBaseURL, llamaTimeout))
 
 	cacheHandlerLlama := gateway.NewCachingHandler(cacheTTL, cacheCapacity, llamacpp.Predict)
 	var llmapredhandler http.Handler = cacheHandlerLlama
-	llmapredhandler = middlewares.ConcurrentLimitWare(2000)(llmapredhandler)
+	llmapredhandler = middlewares.NewAdaptiveConcurrentLimit(2000)(llmapredhandler)
 	mux.Handle("/llamacpp/predict", llmapredhandler)
 
 	// Streaming endpoint bypasses cache (by nature streaming)
 	var llamaStreamHandler http.Handler = http.HandlerFunc(llamacpp.PredictStream)
-	llamaStreamHandler = middlewares.ConcurrentLimitWare(2000)(llamaStreamHandler)
+	llamaStreamHandler = middlewares.NewAdaptiveConcurrentLimit(2000)(llamaStreamHandler)
 	mux.Handle("/llamacpp/stream", llamaStreamHandler)
 
 	// Health and metrics endpoints
